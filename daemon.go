@@ -229,6 +229,10 @@ const (
 	// system-wide daemons provided by the administrator. Valid for FreeBSD, Linux
 	// and Windows only.
 	SystemDaemon Kind = "SystemDaemon"
+	
+	// UserDaemon is a system daemon that runs as the logged-in user.
+	// Valid for SystemD, Linux only
+	UserDaemon Kind = "UserDaemon"
 )
 
 // New - Create a new daemon
@@ -249,7 +253,7 @@ func New(name, description string, kind Kind, dependencies ...string) (Daemon, e
 			return nil, errors.New("Invalid daemon kind specified")
 		}
 	case "linux":
-		if kind != SystemDaemon {
+		if kind != SystemDaemon && kind != UserDaemon {
 			return nil, errors.New("Invalid daemon kind specified")
 		}
 	case "windows":
