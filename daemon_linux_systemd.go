@@ -7,6 +7,7 @@ package daemon
 import (
 	"os"
 	"os/exec"
+	"os/user"
 	"regexp"
 	"strings"
 	"text/template"
@@ -20,24 +21,29 @@ type systemDRecord struct {
 	dependencies []string
 }
 
-// Standard service path for systemD daemons
+// Standard service path for systemUserD daemons
 func (linux *systemDRecord) servicePath() string {
+	if linux.kind == UserDaemon {
+		usr, _ := user.Current()
+		homedir := usr.HomeDir // figure out what to do if it's blank
+		return homedir + "/.config/systemd/user/" + linux.name + ".service"
+	}
 	return "/etc/systemd/system/" + linux.name + ".service"
 }
-
 // Is a service installed
 func (linux *systemDRecord) isInstalled() bool {
-
 	if _, err := os.Stat(linux.servicePath()); err == nil {
 		return true
 	}
-
 	return false
 }
 
 // Check service is running
 func (linux *systemDRecord) checkRunning() (string, bool) {
 	output, err := exec.Command("systemctl", "status", linux.name+".service").Output()
+	if linux.kind == UserDaemon {
+		output, err = exec.Command("systemctl", "--user", "status", linux.name+".service").Output()
+	}
 	if err == nil {
 		if matched, err := regexp.MatchString("Active: active", string(output)); err == nil && matched {
 			reg := regexp.MustCompile("Main PID: ([0-9]+)")
@@ -48,7 +54,6 @@ func (linux *systemDRecord) checkRunning() (string, bool) {
 			return "Service is running...", true
 		}
 	}
-
 	return "Service is stopped", false
 }
 
@@ -56,16 +61,17 @@ func (linux *systemDRecord) checkRunning() (string, bool) {
 func (linux *systemDRecord) Install(args ...string) (string, error) {
 	installAction := "Install " + linux.description + ":"
 
-	if ok, err := checkPrivileges(); !ok {
-		return installAction + failed, err
+	if linux.kind != UserDaemon {
+		if ok, err := checkPrivileges(); !ok {
+			return installAction + failed, err
+		}
 	}
 
 	srvPath := linux.servicePath()
-
+	
 	if linux.isInstalled() {
 		return installAction + failed, ErrAlreadyInstalled
 	}
-
 	file, err := os.Create(srvPath)
 	if err != nil {
 		return installAction + failed, err
@@ -94,14 +100,25 @@ func (linux *systemDRecord) Install(args ...string) (string, error) {
 			strings.Join(args, " "),
 		},
 	); err != nil {
+		return installAction + failed + " :::::" + srvPath, err
+	}
+
+	if linux.kind != UserDaemon {
+		err = exec.Command("systemctl", "daemon-reload").Run()
+	} else {
+		err = exec.Command("systemctl", "--user", "daemon-reload").Run()
+	}
+	if err != nil {
 		return installAction + failed, err
 	}
 
-	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
-		return installAction + failed, err
+	if linux.kind != UserDaemon {
+		err = exec.Command("systemctl", "enable", linux.name+".service").Run()
+	} else {
+		err = exec.Command("systemctl", "--user", "enable", linux.name+".service").Run()
 	}
 
-	if err := exec.Command("systemctl", "enable", linux.name+".service").Run(); err != nil {
+	if err != nil {
 		return installAction + failed, err
 	}
 
@@ -112,22 +129,28 @@ func (linux *systemDRecord) Install(args ...string) (string, error) {
 func (linux *systemDRecord) Remove() (string, error) {
 	removeAction := "Removing " + linux.description + ":"
 
-	if ok, err := checkPrivileges(); !ok {
-		return removeAction + failed, err
+	if linux.kind != UserDaemon {
+		if ok, err := checkPrivileges(); !ok {
+			return removeAction + failed, err
+		}
 	}
 
 	if !linux.isInstalled() {
 		return removeAction + failed, ErrNotInstalled
 	}
+	var err error
 
-	if err := exec.Command("systemctl", "disable", linux.name+".service").Run(); err != nil {
+	if linux.kind != UserDaemon {
+		err = exec.Command("systemctl", "disable", linux.name+".service").Run()
+	} else {
+		err = exec.Command("systemctl", "--user", "disable", linux.name+".service").Run()
+	}
+	if err != nil {
 		return removeAction + failed, err
 	}
-
 	if err := os.Remove(linux.servicePath()); err != nil {
 		return removeAction + failed, err
 	}
-
 	return removeAction + success, nil
 }
 
@@ -135,8 +158,10 @@ func (linux *systemDRecord) Remove() (string, error) {
 func (linux *systemDRecord) Start() (string, error) {
 	startAction := "Starting " + linux.description + ":"
 
-	if ok, err := checkPrivileges(); !ok {
-		return startAction + failed, err
+	if linux.kind != UserDaemon {
+		if ok, err := checkPrivileges(); !ok {
+			return startAction + failed, err
+		}
 	}
 
 	if !linux.isInstalled() {
@@ -147,7 +172,14 @@ func (linux *systemDRecord) Start() (string, error) {
 		return startAction + failed, ErrAlreadyRunning
 	}
 
-	if err := exec.Command("systemctl", "start", linux.name+".service").Run(); err != nil {
+	var err error
+
+	if linux.kind != UserDaemon {
+		err = exec.Command("systemctl", "start", linux.name+".service").Run()
+	} else {
+		err = exec.Command("systemctl", "--user", "start", linux.name+".service").Run()
+	}
+	if err != nil {
 		return startAction + failed, err
 	}
 
@@ -158,8 +190,10 @@ func (linux *systemDRecord) Start() (string, error) {
 func (linux *systemDRecord) Stop() (string, error) {
 	stopAction := "Stopping " + linux.description + ":"
 
-	if ok, err := checkPrivileges(); !ok {
-		return stopAction + failed, err
+	if linux.kind != UserDaemon {
+		if ok, err := checkPrivileges(); !ok {
+			return stopAction + failed, err
+		}
 	}
 
 	if !linux.isInstalled() {
@@ -170,7 +204,14 @@ func (linux *systemDRecord) Stop() (string, error) {
 		return stopAction + failed, ErrAlreadyStopped
 	}
 
-	if err := exec.Command("systemctl", "stop", linux.name+".service").Run(); err != nil {
+	var err error
+
+	if linux.kind != UserDaemon {
+		err = exec.Command("systemctl", "stop", linux.name+".service").Run()
+	} else {
+		err = exec.Command("systemctl", "--user", "stop", linux.name+".service").Run()
+	}
+	if err != nil {
 		return stopAction + failed, err
 	}
 
@@ -180,8 +221,10 @@ func (linux *systemDRecord) Stop() (string, error) {
 // Status - Get service status
 func (linux *systemDRecord) Status() (string, error) {
 
-	if ok, err := checkPrivileges(); !ok {
-		return "", err
+	if linux.kind != UserDaemon {
+		if ok, err := checkPrivileges(); !ok {
+			return "", err
+		}
 	}
 
 	if !linux.isInstalled() {
