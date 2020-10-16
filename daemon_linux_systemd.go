@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+	"path/filepath"
 )
 
 // systemDRecord - standard record (struct) for linux systemD version of daemon package
