@@ -24,12 +24,14 @@ type systemDRecord struct {
 // Standard service path for systemUserD daemons
 func (linux *systemDRecord) servicePath() string {
 	if linux.kind == UserDaemon {
-		usr, _ := user.Current()
-		homedir := usr.HomeDir // figure out what to do if it's blank
-		return homedir + "/.config/systemd/user/" + linux.name + ".service"
+		usr, _ := user.Current() // figure out what to do if it's blank
+		path := filepath.Join(usr.HomeDir, ".config", "systemd", "user")
+		os.MkdirAll(path, os.ModePerm|os.ModeDir) // create if it doesn't exist
+		return filepath.Join(path, linux.name+".service")
 	}
 	return "/etc/systemd/system/" + linux.name + ".service"
 }
+
 // Is a service installed
 func (linux *systemDRecord) isInstalled() bool {
 	if _, err := os.Stat(linux.servicePath()); err == nil {
